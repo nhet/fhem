@@ -26,9 +26,8 @@ use LWP::UserAgent;
 use HTTP::Request;
 use utf8;
 use JSON qw(decode_json);
-use locale;
-use POSIX 'locale_h';
-setlocale(LC_ALL, 'de_DE.UTF-8');
+use POSIX qw( strftime );
+
 
 ##############################################################################
 
@@ -41,11 +40,7 @@ sub DWDWarnings_Initialize($) {
 	$hash->{UndefFn}	=	"DWDWarnings_Undefine";
 	$hash->{GetFn}		=	"DWDWarnings_Get";
 	$hash->{AttrList}	=	"disable:0,1 ".
-								"ignoreList ".
-								"updateIgnored:1 ".
-								"updateEmpty:1 ".
-								"levelsFormat ".
-								"weekdaysFormat ".
+								"INTERVAL ".
 								$readingFnAttributes;
 }
 
@@ -57,10 +52,15 @@ sub DWDWarnings_Define($$$) {
 	return "syntax: define <name> DWDWarnings <warningID>" if(int(@a) != 3 );
 	my $name = $hash->{NAME};
 
-	$hash->{helper}{warningID} = $a[2];
-	$hash->{helper}{INTERVAL} = 300;
+	$hash->{helper}{warningID}	= $a[2];
+	$hash->{helper}{INTERVAL} 	= 300;
 
-	$hash->{STATE} = "Initialized";
+	$hash->{STATE} 			= "Initialized";
+	$hash->{INTERVAL}       = 3600;
+	
+	RemoveInternalTimer($hash);
+	 #Get first data after 32 seconds
+   InternalTimer( gettimeofday() + 32, "DWDWarnings_GetUpdate", $hash, 0 );
 	return undef;
 }
 
@@ -68,7 +68,7 @@ sub DWDWarnings_Undefine($$) {
 	my ($hash, $arg) = @_;
 	my $name = $hash->{NAME};
 	RemoveInternalTimer($hash);
-	fhem("deletereading $name fc.*", 1);
+	fhem("deletereading $name *", 1);
 	return undef;
 }
 
@@ -103,6 +103,23 @@ sub DWDWarnings_GetUpdate($) {
 		Log3 $name, 2, "DWDWarnings $name is disabled, data update cancelled.";
 		return undef;
 	}
+	
+	$hash->{INTERVAL} = AttrVal( $name, "INTERVAL",  $hash->{INTERVAL} );
+	
+	if($hash->{INTERVAL} > 0) {
+		# reset timer if interval is defined
+		RemoveInternalTimer( $hash );
+		InternalTimer(gettimeofday() + $hash->{INTERVAL}, "DWDWarnings_GetUpdate", $hash, 1 );
+		return undef if AttrVal($name, "disable", 0 ) == 1 && !$hash->{fhem}{LOCAL};
+   }
+   
+   # "Set update"-action will kill a running update child process
+   if (defined ($hash->{helper}{RUNNING_PID}) && $hash->{fhem}{LOCAL})
+   {
+      BlockingKill($hash->{helper}{RUNNING_PID});
+      delete( $hash->{helper}{RUNNING_PID} );
+      Log3 $name, 3, "Killing old forked process";
+   }
 
 	my $url="http://www.dwd.de/DWD/warnungen/warnapp/json/warnings.json";
 	Log3 $name, 3, "Getting URL $url";
@@ -115,6 +132,14 @@ sub DWDWarnings_GetUpdate($) {
 		callback => \&DWDWarnings_Parse,
 	});
 	return undef;
+}
+
+#####################################
+sub DWDWarnings_Aborted($)
+{
+   my ($hash) = @_;
+   delete( $hash->{helper}{RUNNING_PID} );
+   PROPLANTA_Log $hash, 4, "Forked process timed out";
 }
 
 
@@ -174,7 +199,7 @@ sub DWDWarnings_Parse($$$)
 			readingsBulkUpdate($hash, $warnDesc,		Encode::encode("UTF-8",$item->{'description'}));
 			readingsBulkUpdate($hash, $warnStart, 		DWDWarnings_makeTimeString($item->{'start'}));
 			readingsBulkUpdate($hash, $warnEnd, 		DWDWarnings_makeTimeString($item->{'end'}));
-			readingsBulkUpdate($hash, $warnLevel, 		DWDWarnings_makeTimeString($item->{'level'}));
+			readingsBulkUpdate($hash, $warnLevel, 		$item->{'level'});
 			$count++;
 
 			$warningText = $warningText."<b>".$item->{'headline'}." für ".$item->{'regionName'}."</b><br>Von: ".DWDWarnings_makeTimeString($item->{'start'})." bis: ".DWDWarnings_makeTimeString($item->{'end'})."<br>".$item->{'description'}."<br>";
@@ -199,11 +224,9 @@ sub DWDWarnings_makeTimeString($) {
 	my ($time) = @_;
 	
 	my $lastUpdateTime = $time/1000;
-	my ($sec,$min,$hour,$day,$month,$year) = (localtime $lastUpdateTime)[0..5];
-   	$month = $month +1; 
-	$year = $year+1900;
-	
-	return "$day.$month.$year $hour:$min";
+		
+	my $dt = strftime("%d.%m.%Y %H:%M", localtime($lastUpdateTime));
+	return $dt;
 }
 ##########################
 
@@ -324,31 +347,9 @@ sub DWDWarnings_makeTimeString($) {
   <br>
    <b>Attribute</b>
    <ul>
-      <li><code>ignoreList</code>
-         <br>
-         Kommagetrennte Liste von Allergen-Namen, die bei der Aktualisierung ignoriert werden sollen.
-    <br>
-      </li><br>
-      <li><code>updateEmpty (Standard: 0|1)</code>
-         <br>
-         Aktualisierung von Allergenen.
-    <code> <br>
-    0 = nur Allergene mit Belastung.
-    <br>
-    1 = auch Allergene die keine Belastung haben.
-    </code>
-      </li><br>
-      <li><code>updateIgnored (1)</code>
-         <br>
-         Aktualisierung von Allergenen, die sonst durch die ignoreList entfernt werden.
-      </li><br>
-      <li><code>levelsFormat (Standard: -,low,moderate,high,extreme)</code>
-         <br>
-         Lokalisierte Levels, durch Kommas getrennt.
-      </li><br>
-      <li><code>weekdaysFormat (Standard: Sun,Mon,Tue,Wed,Thu,Fri,Sat)</code>
-         <br>
-         Lokalisierte Wochentage, durch Kommas getrennt.
+		<li><code>INTERVAL &lt;Abfrageinterval&gt;</code>
+			<br>
+			Abfrageinterval in Sekunden (Standard 300 = 5 Minuten)
       </li><br>
   </ul>
 </ul>
