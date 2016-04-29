@@ -9,6 +9,7 @@
 #
 #  
 # v1. Beta 1 - 20160406
+# v1. Beta 1 - 20160429
 #
 ##############################################################################
 #
@@ -27,6 +28,7 @@ use HTTP::Request;
 use utf8;
 use JSON qw(decode_json);
 use POSIX qw( strftime );
+use Try::Tiny;
 
 
 ##############################################################################
@@ -158,59 +160,81 @@ sub DWDWarnings_Parse($$$)
 
 	my $json = $data;
 	
-	##warnWetter.loadWarnings( am Start entfernen
-	$json = substr($json,24,length($json));
-	## ); am Ende entfernen
-	$json = substr($json,0,(length($json)-2));
+	try {
+		##warnWetter.loadWarnings( am Start entfernen
+		$json = substr($json,24,length($json));
+		## ); am Ende entfernen
+		$json = substr($json,0,(length($json)-2));
+			
+		$json = decode_json($json);
 		
-	$json = decode_json($json);
-	
-	Log3 $name, 3, "LastUpdate:  ".$json->{time};
-	
-	my $lastUpdateTime = ($json->{time}/1000);
-	
-	fhem( "deletereading $name warning.*", 1 );
-	
-	readingsBeginUpdate($hash); # Start update readings
-	readingsBulkUpdate($hash, "lastUpdateUX", ($json->{time}));
-	readingsBulkUpdate($hash, "lastUpdate",DWDWarnings_makeTimeString($lastUpdateTime));
-	
-	my $warningID = $hash->{helper}{warningID};
-	
-	if (exists $json->{warnings}->{$warningID})
-	{
-		my $station = $json->{warnings}->{$warningID};
-		my $warningsCount = scalar (@{$station});
-		readingsBulkUpdate($hash, "warningsCount", $warningsCount);
-	
-		my $warningText = "";
-		my $count = 1;
-		foreach my $item( @$station )
+		Log3 $name, 3, "LastUpdate:  ".$json->{time};
+		
+		my $lastUpdateTime = $json->{time};
+		
+		fhem( "deletereading $name warning.*", 1 );
+		
+		# Start update readings
+		readingsBeginUpdate($hash); 
+		readingsBulkUpdate($hash, "lastUpdateUX", ($lastUpdateTime));
+		readingsBulkUpdate($hash, "lastUpdate",DWDWarnings_makeTimeString($lastUpdateTime));
+		
+		my $warningID = $hash->{helper}{warningID};
+		
+		if (exists $json->{warnings}->{$warningID})
 		{
-			my $warnHeadLine 	= "warning".$count."HeadLine";
-			my $warnRegion		= "warning".$count."Region";
-			my $warnDesc		= "warning".$count."Desc";
-			my $warnStart		= "warning".$count."validFrom";
-			my $warnEnd			= "warning".$count."validTo";
-			my $warnLevel		= "warning".$count."level";
+			my $station = $json->{warnings}->{$warningID};
+			my $warningsCount = scalar (@{$station});
+			readingsBulkUpdate($hash, "warningsCount", $warningsCount);
+		
+			my $warningText     = "";
+			my $count           = 1;
+			my $highestLevel    = 0;
+			my $highestMsg		= "";
+			my $headLines = "";
+			foreach my $item( @$station )
+			{
+				my $warnHeadLine 	= "warning".$count."HeadLine";
+				my $warnRegion		= "warning".$count."Region";
+				my $warnDesc		= "warning".$count."Desc";
+				my $warnStart		= "warning".$count."validFrom";
+				my $warnEnd			= "warning".$count."validTo";
+				my $warnLevel		= "warning".$count."level";
 
-			readingsBulkUpdate($hash, $warnHeadLine,	Encode::encode("UTF-8",$item->{'headline'}));
-			readingsBulkUpdate($hash, $warnRegion,		Encode::encode("UTF-8",$item->{'regionName'}));
-			readingsBulkUpdate($hash, $warnDesc,		Encode::encode("UTF-8",$item->{'description'}));
-			readingsBulkUpdate($hash, $warnStart, 		DWDWarnings_makeTimeString($item->{'start'}));
-			readingsBulkUpdate($hash, $warnEnd, 		DWDWarnings_makeTimeString($item->{'end'}));
-			readingsBulkUpdate($hash, $warnLevel, 		$item->{'level'});
-			$count++;
-
-			$warningText = $warningText."<b>".$item->{'headline'}." für ".$item->{'regionName'}."</b><br>Von: ".DWDWarnings_makeTimeString($item->{'start'})." bis: ".DWDWarnings_makeTimeString($item->{'end'})."<br>".$item->{'description'}."<br>";
+				readingsBulkUpdate($hash, $warnHeadLine,	Encode::encode("UTF-8",$item->{'headline'}));
+				readingsBulkUpdate($hash, $warnRegion,		Encode::encode("UTF-8",$item->{'regionName'}));
+				readingsBulkUpdate($hash, $warnDesc,		Encode::encode("UTF-8",$item->{'description'}));
+				readingsBulkUpdate($hash, $warnStart, 		DWDWarnings_makeTimeString($item->{'start'}));
+				readingsBulkUpdate($hash, $warnEnd, 		DWDWarnings_makeTimeString($item->{'end'}));
+				readingsBulkUpdate($hash, $warnLevel, 		$item->{'level'});
+				$count++;
+				
+				if ($item->{'level'} >  $highestLevel)
+				{
+					$highestLevel = $item->{'level'};
+					$highestMsg = Encode::encode("UTF-8",$item->{'headline'});
+				}
+				
+				$headLines = $headLines.Encode::encode("UTF-8",$item->{'headline'})."<br>";
+				$warningText = $warningText."<b>".$item->{'headline'}." für ".$item->{'regionName'}."</b><br>Von: ".DWDWarnings_makeTimeString($item->{'start'})." bis: ".DWDWarnings_makeTimeString($item->{'end'})."<br>".$item->{'description'}."<br>";
+			}
+			readingsBulkUpdate($hash, "warningTextHTML",		Encode::encode("UTF-8",$warningText));
+			readingsBulkUpdate($hash, "highestLevel",$highestLevel);
+			readingsBulkUpdate($hash, "highestMsg",$highestMsg);
+			readingsBulkUpdate($hash, "headLines",$headLines);
 		}
-		readingsBulkUpdate($hash, "warningTextHTML",		Encode::encode("UTF-8",$warningText));
+		else
+		{
+			readingsBulkUpdate($hash, "warningsCount", "0");
+			readingsBulkUpdate($hash, "highestLevel", "0");
+			readingsBulkUpdate($hash, "highestMsg", "");
+			readingsBulkUpdate($hash, "headLines", "");
+		}
+		readingsEndUpdate($hash, 1);
 	}
-	else
-	{
-		readingsBulkUpdate($hash, "warningsCount", "0");
-	}
-	readingsEndUpdate($hash, 1);
+	catch {
+		Log3 $name, 2, "WARNING! Something is wrong with the JSON content: $json";
+	};
 
 	$hash->{UPDATED} = FmtDateTime(time());
 
@@ -223,9 +247,12 @@ sub DWDWarnings_Parse($$$)
 sub DWDWarnings_makeTimeString($) {
 	my ($time) = @_;
 	
+	Log3 "DWDWarnings_makeTimeString",2, "InputTime:'$time'";
+	
 	my $lastUpdateTime = $time/1000;
-		
+	Log3 "DWDWarnings_makeTimeString", 2,"InputTime2:'$lastUpdateTime'";
 	my $dt = strftime("%d.%m.%Y %H:%M", localtime($lastUpdateTime));
+	Log3 "DWDWarnings_makeTimeString", 2,"dt:'$dt'";
 	return $dt;
 }
 ##########################
