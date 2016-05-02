@@ -10,6 +10,7 @@
 #  
 # v1. Beta 1 - 20160406
 # v1. Beta 1 - 20160429
+# v1. Beta 2 - 20160502
 #
 ##############################################################################
 #
@@ -227,8 +228,9 @@ sub DWDWarnings_Parse($$$)
 		{
 			readingsBulkUpdate($hash, "warningsCount", "0");
 			readingsBulkUpdate($hash, "highestLevel", "0");
-			readingsBulkUpdate($hash, "highestMsg", "");
-			readingsBulkUpdate($hash, "headLines", "");
+			
+			readingsBulkUpdate($hash, "highestMsg", "&nbsp;");
+			readingsBulkUpdate($hash, "headLines", "&nbsp;");
 		}
 		readingsEndUpdate($hash, 1);
 	}
