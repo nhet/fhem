@@ -11,6 +11,7 @@
 # v1. Beta 1 - 20160406
 # v1. Beta 1 - 20160429
 # v1. Beta 2 - 20160502
+# v1. Beta 3 - 20160607
 #
 ##############################################################################
 #
@@ -174,6 +175,7 @@ sub DWDWarnings_Parse($$$)
 		my $lastUpdateTime = $json->{time};
 		
 		fhem( "deletereading $name warning.*", 1 );
+		fhem( "deletereading $name vorabInformation.*", 1 );
 		
 		# Start update readings
 		readingsBeginUpdate($hash); 
@@ -181,18 +183,60 @@ sub DWDWarnings_Parse($$$)
 		readingsBulkUpdate($hash, "lastUpdate",DWDWarnings_makeTimeString($lastUpdateTime));
 		
 		my $warningID = $hash->{helper}{warningID};
+		my $warningText     = "";
+		my $headLines = "";
 		
+		if (exists $json->{vorabInformation}->{$warningID})
+		{
+			my $station = $json->{vorabInformation}->{$warningID};
+			my $warningsCount = scalar (@{$station});
+			readingsBulkUpdate($hash, "vorabInformationCount", $warningsCount);
+					
+			my $count           = 1;
+			my $highestLevel    = 0;
+			my $highestMsg		= "";
+			
+			foreach my $item( @$station )
+			{
+				my $infoHeadLine 	= "vorabInformation".$count."HeadLine";
+				my $infoRegion		= "vorabInformation".$count."Region";
+				my $infoDesc		= "vorabInformation".$count."Desc";
+				my $infoStart		= "vorabInformation".$count."validFrom";
+				my $infoEnd			= "vorabInformation".$count."validTo";
+				my $infoLevel		= "vorabInformation".$count."level";
+
+				readingsBulkUpdate($hash, $infoHeadLine,	Encode::encode("UTF-8",$item->{'headline'}));
+				readingsBulkUpdate($hash, $infoRegion,		Encode::encode("UTF-8",$item->{'regionName'}));
+				readingsBulkUpdate($hash, $infoDesc,		Encode::encode("UTF-8",$item->{'description'}));
+				readingsBulkUpdate($hash, $infoStart, 		DWDWarnings_makeTimeString($item->{'start'}));
+				readingsBulkUpdate($hash, $infoEnd, 		DWDWarnings_makeTimeString($item->{'end'}));
+				readingsBulkUpdate($hash, $infoLevel, 		$item->{'level'});
+				$count++;
+				
+				if ($item->{'level'} >  $highestLevel)
+				{
+					$highestLevel = $item->{'level'};
+					$highestMsg = Encode::encode("UTF-8",$item->{'headline'});
+				}
+				
+				$headLines = $headLines.Encode::encode("UTF-8",$item->{'headline'})."<br>";
+				$warningText = $warningText."<b>".$item->{'headline'}." für ".$item->{'regionName'}."</b><br>Von: ".DWDWarnings_makeTimeString($item->{'start'})." bis: ".DWDWarnings_makeTimeString($item->{'end'})."<br>".$item->{'description'}."<br>";
+			}
+			readingsBulkUpdate($hash, "warningTextHTML",		Encode::encode("UTF-8",$warningText));
+			readingsBulkUpdate($hash, "highestInfoLevel",$highestLevel);
+			readingsBulkUpdate($hash, "highestInfoMsg",$highestMsg);
+			readingsBulkUpdate($hash, "headLines",$headLines);			
+		}
 		if (exists $json->{warnings}->{$warningID})
 		{
 			my $station = $json->{warnings}->{$warningID};
 			my $warningsCount = scalar (@{$station});
 			readingsBulkUpdate($hash, "warningsCount", $warningsCount);
-		
-			my $warningText     = "";
+			
 			my $count           = 1;
 			my $highestLevel    = 0;
 			my $highestMsg		= "";
-			my $headLines = "";
+
 			foreach my $item( @$station )
 			{
 				my $warnHeadLine 	= "warning".$count."HeadLine";
@@ -227,6 +271,7 @@ sub DWDWarnings_Parse($$$)
 		else
 		{
 			readingsBulkUpdate($hash, "warningsCount", "0");
+			readingsBulkUpdate($hash, "vorabInformation", "0");
 			readingsBulkUpdate($hash, "highestLevel", "0");
 			
 			readingsBulkUpdate($hash, "highestMsg", "&nbsp;");
