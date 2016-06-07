@@ -126,7 +126,7 @@ sub DWDWarnings_GetUpdate($) {
    }
 
 	my $url="http://www.dwd.de/DWD/warnungen/warnapp/json/warnings.json";
-	Log3 $name, 3, "Getting URL $url";
+	#Log3 $name, 3, "Getting URL $url";
 
 	HttpUtils_NonblockingGet({
 		url => $url,
@@ -170,7 +170,7 @@ sub DWDWarnings_Parse($$$)
 			
 		$json = decode_json($json);
 		
-		Log3 $name, 3, "LastUpdate:  ".$json->{time};
+		#Log3 $name, 3, "LastUpdate:  ".$json->{time};
 		
 		my $lastUpdateTime = $json->{time};
 		
@@ -294,12 +294,12 @@ sub DWDWarnings_Parse($$$)
 sub DWDWarnings_makeTimeString($) {
 	my ($time) = @_;
 	
-	Log3 "DWDWarnings_makeTimeString",2, "InputTime:'$time'";
+	#Log3 "DWDWarnings_makeTimeString",2, "InputTime:'$time'";
 	
 	my $lastUpdateTime = $time/1000;
-	Log3 "DWDWarnings_makeTimeString", 2,"InputTime2:'$lastUpdateTime'";
+	#Log3 "DWDWarnings_makeTimeString", 2,"InputTime2:'$lastUpdateTime'";
 	my $dt = strftime("%d.%m.%Y %H:%M", localtime($lastUpdateTime));
-	Log3 "DWDWarnings_makeTimeString", 2,"dt:'$dt'";
+	#Log3 "DWDWarnings_makeTimeString", 2,"dt:'$dt'";
 	return $dt;
 }
 ##########################
